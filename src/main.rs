@@ -69,6 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let logger = logger::GenericLogger::new(verbose, json);
 
+    let mut socket = Socket::connect()?;
+
     if has_window_flags {
         let matcher = window::WindowMatcher::new(
             cli.app_id
@@ -84,7 +86,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut state = window::WindowState::new();
 
-        let mut socket = Socket::connect()?;
         <logger::GenericLogger as Logger<Window>>::log_connected(&logger);
 
         window::populate_window_cache(&mut socket, &mut state, &logger)?;
@@ -106,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             match read_event() {
                 Ok(event) => {
-                    if let Err(e) = handle_event(
+                    if let Err(e) = handle_window_event(
                         event,
                         &mut state,
                         &matcher,
@@ -140,7 +141,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut state = output::OutputState::new();
 
-        let mut socket = Socket::connect()?;
         <logger::GenericLogger as Logger<output::Output>>::log_connected(&logger);
 
         let outputs = Vec::new();
@@ -158,14 +158,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         <logger::GenericLogger as Logger<output::Output>>::log_streaming(&logger);
 
-        eprintln!("Output mode not yet fully implemented");
-        std::process::exit(1);
+        let mut read_event = socket.read_events();
+
+        loop {
+            match read_event() {
+                Ok(event) => {
+                    if let Err(e) = handle_output_event(
+                        event,
+                        &mut state,
+                        &matcher,
+                        &logger,
+                    ) {
+                        if json {
+                            eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
+                        } else {
+                            eprintln!("Error handling event: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    if json {
+                        eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
+                    } else {
+                        eprintln!("Error reading event: {}", e);
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     Ok(())
 }
 
-fn handle_event(
+fn handle_window_event(
     event: Event,
     state: &mut window::WindowState,
     matcher: &window::WindowMatcher,
@@ -206,5 +232,14 @@ fn handle_event(
         }
         _ => {}
     }
+    Ok(())
+}
+
+fn handle_output_event(
+    _event: Event,
+    _state: &mut output::OutputState,
+    _matcher: &output::OutputMatcher,
+    _logger: &impl logger::Logger<output::Output>,
+) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
