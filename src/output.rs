@@ -2,6 +2,8 @@ use crate::logger::Logger;
 use crate::matcher::Matcher;
 use crate::target::Target;
 use regex::Regex;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 #[derive(Clone)]
 pub struct Output {
@@ -54,12 +56,29 @@ impl Matcher<Output> for OutputMatcher {
 
 pub type OutputState = crate::target::TargetState<Output>;
 
+pub fn get_output_id_from_name(name: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    hasher.finish()
+}
+
 pub fn populate_output_cache(
-    _socket: &mut niri_ipc::socket::Socket,
+    socket: &mut niri_ipc::socket::Socket,
     state: &mut OutputState,
     logger: &dyn Logger<Output>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = (state, logger);
+    let reply = socket.send(niri_ipc::Request::Outputs)?;
+    if let Ok(niri_ipc::Response::Outputs(outputs_map)) = reply {
+        for (name, _niri_output) in outputs_map {
+            let output_id = get_output_id_from_name(&name);
+            let output = Output {
+                id: output_id,
+                name: Some(name.clone()),
+            };
+            state.targets.insert(output.id, output.clone());
+            logger.log_target_loaded(&output);
+        }
+    }
     Ok(())
 }
 

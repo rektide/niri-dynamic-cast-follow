@@ -164,21 +164,58 @@ fn handle_window_event(
 }
 
 fn handle_output_event(
-    _event: Event,
-    _state: &mut output::OutputState,
-    _matcher: &dyn matcher::Matcher<output::Output>,
-    _logger: &dyn logger::Logger<output::Output>,
-    _json: bool,
+    event: Event,
+    state: &mut output::OutputState,
+    matcher: &dyn matcher::Matcher<output::Output>,
+    logger: &dyn logger::Logger<output::Output>,
+    json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match _event {
-        _ => {
-            if _json {
-                eprintln!(
-                    "{}",
-                    serde_json::json!({"event": "info", "message": "Output mode not yet implemented"})
-                );
+    match event {
+        Event::WorkspaceActivated { id, focused } => {
+            // When a workspace becomes focused, infer output focus change
+            // Note: We don't have direct access to workspace data here, so we can't determine
+            // which output the workspace is on without requesting workspaces
+            if focused {
+                if json {
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({
+                            "event": "workspace_focused",
+                            "workspace_id": id,
+                            "note": "Output focus tracking via workspace events is limited without workspace state"
+                        })
+                    );
+                } else {
+                    eprintln!("Workspace {} focused (output focus inferred from workspace focus)", id);
+                }
             }
         }
+        Event::WorkspacesChanged { workspaces } => {
+            // Track which output has the focused workspace
+            for workspace in &workspaces {
+                if workspace.is_focused {
+                    if let Some(output_name) = &workspace.output {
+                        let output_id = output::get_output_id_from_name(output_name);
+
+                        logger.log_focus_change(Some(output_id), state.targets.get(&output_id));
+
+                        if state.current_focused_id == Some(output_id) {
+                            return Ok(());
+                        }
+
+                        state.current_focused_id = Some(output_id);
+
+                        if let Some(output) = state.targets.get(&output_id) {
+                            if let Some(mt) = matcher.matches(output) {
+                                logger.log_target_matched(output, &mt);
+                                output::send_set_dynamic_cast_output(output_id)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
