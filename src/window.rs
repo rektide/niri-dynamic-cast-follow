@@ -1,3 +1,4 @@
+use crate::logger::Logger;
 use crate::matcher::Matcher;
 use crate::target::Target;
 use niri_ipc::{Action, Request, Response};
@@ -69,7 +70,7 @@ pub type WindowState = crate::target::TargetState<Window>;
 pub fn populate_window_cache(
     socket: &mut Socket,
     state: &mut WindowState,
-    logger: &crate::Logger,
+    logger: &impl Logger<Window>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reply = socket.send(Request::Windows)?;
     if let Ok(Response::Windows(win_list)) = reply {
@@ -81,7 +82,7 @@ pub fn populate_window_cache(
                 app_id: app_id.clone(),
                 title: title.clone(),
             });
-            logger.log_window_loaded(&Window {
+            logger.log_target_loaded(&Window {
                 id: window.id,
                 app_id,
                 title,
