@@ -1,9 +1,11 @@
 use clap::Parser;
-use niri_ipc::{Action, Event, Request, Response};
+use niri_ipc::{Event, Request, Response};
 use niri_ipc::socket::Socket;
 use regex::Regex;
 use serde_json;
-use std::collections::HashMap;
+
+mod window;
+use window::Window;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -38,34 +40,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let matcher = Matcher {
-        app_id_regexes: cli
-            .app_id
+    let matcher = window::WindowMatcher::new(
+        cli.app_id
             .iter()
             .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
             .collect(),
-        title_regexes: cli
-            .title
+        cli.title
             .iter()
             .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
             .collect(),
-        target_ids: cli.id,
-    };
+        cli.id,
+    );
 
     let json = cli.json;
     let verbose = cli.verbose;
 
-    let mut state = WindowState {
-        windows: HashMap::new(),
-        current_focused_window_id: None,
-    };
+    let mut state = window::WindowState::new();
 
     let logger = Logger::new(verbose, json);
 
     let mut socket = Socket::connect()?;
     logger.log_connected();
 
-    populate_window_cache(&mut socket, &mut state, &logger)?;
+    window::populate_window_cache(&mut socket, &mut state, &logger)?;
 
     let reply = socket.send(Request::EventStream)?;
     if !matches!(reply, Ok(Response::Handled)) {
@@ -111,45 +108,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn populate_window_cache(
-    socket: &mut Socket,
-    state: &mut WindowState,
-    logger: &Logger,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let reply = socket.send(Request::Windows)?;
-    if let Ok(Response::Windows(win_list)) = reply {
-        for window in win_list {
-            let app_id = window.app_id.clone();
-            let title = window.title.clone();
-            state.windows.insert(window.id, Window {
-                id: window.id,
-                app_id: app_id.clone(),
-                title: title.clone(),
-            });
-            logger.log_window_loaded(&Window {
-                id: window.id,
-                app_id,
-                title,
-            });
-        }
-    }
-    Ok(())
-}
-
 fn handle_event(
     event: Event,
-    state: &mut WindowState,
-    matcher: &Matcher,
+    state: &mut window::WindowState,
+    matcher: &window::WindowMatcher,
     logger: &Logger,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match event {
         Event::WindowOpenedOrChanged { window } => {
-            logger.log_window_changed(&Window {
+            logger.log_window_changed(&window::Window {
                 id: window.id,
                 app_id: window.app_id.clone(),
                 title: window.title.clone(),
             });
-            state.windows.insert(window.id, Window {
+            state.windows.insert(window.id, window::Window {
                 id: window.id,
                 app_id: window.app_id,
                 title: window.title,
@@ -170,7 +142,7 @@ fn handle_event(
                 if let Some(window) = state.windows.get(&window_id) {
                     if let Some(mt) = matcher.matches(window) {
                         logger.log_window_matched(window, &mt);
-                        send_set_dynamic_cast_window(window_id)?;
+                        window::send_set_dynamic_cast_window(window_id)?;
                     }
                 }
             }
@@ -178,23 +150,6 @@ fn handle_event(
         _ => {}
     }
     Ok(())
-}
-
-struct Window {
-    id: u64,
-    app_id: Option<String>,
-    title: Option<String>,
-}
-
-struct Matcher {
-    app_id_regexes: Vec<Regex>,
-    title_regexes: Vec<Regex>,
-    target_ids: Vec<u64>,
-}
-
-struct WindowState {
-    windows: HashMap<u64, Window>,
-    current_focused_window_id: Option<u64>,
 }
 
 struct Logger {
@@ -310,52 +265,6 @@ impl Logger {
                 "Window matched! match_type={}, id={}, app_id={:?}, title={:?}",
                 match_type, window.id, window.app_id, window.title
             );
-        }
-    }
-}
-
-impl Matcher {
-    fn matches(&self, window: &Window) -> Option<String> {
-        if self.target_ids.contains(&window.id) {
-            return Some("id".to_string());
-        }
-
-        if let Some(app_id) = &window.app_id {
-            for regex in &self.app_id_regexes {
-                if regex.is_match(app_id) {
-                    return Some("app_id".to_string());
-                }
-            }
-        }
-
-        if let Some(title) = &window.title {
-            for regex in &self.title_regexes {
-                if regex.is_match(title) {
-                    return Some("title".to_string());
-                }
-            }
-        }
-
-        None
-    }
-}
-
-fn send_set_dynamic_cast_window(window_id: u64) -> Result<(), Box<dyn std::error::Error>> {
-    let mut action_socket = Socket::connect()?;
-    let action = Action::SetDynamicCastWindow { id: Some(window_id) };
-    let request = Request::Action(action);
-
-    let reply = action_socket.send(request)?;
-
-    match reply {
-        Ok(Response::Handled) => Ok(()),
-        Ok(resp) => {
-            eprintln!("Unexpected response: {:?}", resp);
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("Error sending action: {}", e);
-            Err(e.into())
         }
     }
 }
