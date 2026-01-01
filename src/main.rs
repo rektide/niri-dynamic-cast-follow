@@ -65,24 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut socket = Socket::connect()?;
     logger.log_connected();
 
-    // Get current window list to populate cache
-    let reply = socket.send(Request::Windows)?;
-    if let Ok(Response::Windows(win_list)) = reply {
-        for window in win_list {
-            let app_id = window.app_id.clone();
-            let title = window.title.clone();
-            state.windows.insert(window.id, Window {
-                id: window.id,
-                app_id: app_id.clone(),
-                title: title.clone(),
-            });
-            logger.log_window_loaded(&Window {
-                id: window.id,
-                app_id,
-                title,
-            });
-        }
-    }
+    populate_window_cache(&mut socket, &mut state, &logger)?;
 
     let reply = socket.send(Request::EventStream)?;
     if !matches!(reply, Ok(Response::Handled)) {
@@ -125,6 +108,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    Ok(())
+}
+
+fn populate_window_cache(
+    socket: &mut Socket,
+    state: &mut WindowState,
+    logger: &Logger,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let reply = socket.send(Request::Windows)?;
+    if let Ok(Response::Windows(win_list)) = reply {
+        for window in win_list {
+            let app_id = window.app_id.clone();
+            let title = window.title.clone();
+            state.windows.insert(window.id, Window {
+                id: window.id,
+                app_id: app_id.clone(),
+                title: title.clone(),
+            });
+            logger.log_window_loaded(&Window {
+                id: window.id,
+                app_id,
+                title,
+            });
+        }
+    }
     Ok(())
 }
 
