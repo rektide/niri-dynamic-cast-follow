@@ -1,3 +1,4 @@
+use crate::matcher::Matcher;
 use crate::target::Target;
 use niri_ipc::{Action, Request, Response};
 use niri_ipc::socket::Socket;
@@ -35,8 +36,10 @@ impl WindowMatcher {
             target_ids,
         }
     }
+}
 
-    pub fn matches(&self, window: &Window) -> Option<String> {
+impl Matcher<Window> for WindowMatcher {
+    fn matches(&self, window: &Window) -> Option<String> {
         if self.target_ids.contains(&window.id) {
             return Some("id".to_string());
         }

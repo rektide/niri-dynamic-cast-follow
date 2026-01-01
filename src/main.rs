@@ -4,8 +4,10 @@ use niri_ipc::socket::Socket;
 use regex::Regex;
 use serde_json;
 
+mod matcher;
 mod target;
 mod window;
+use matcher::Matcher;
 use window::Window;
 
 #[derive(Parser, Debug)]
