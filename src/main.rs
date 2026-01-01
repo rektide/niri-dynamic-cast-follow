@@ -38,33 +38,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let app_id_regexes: Vec<Regex> = cli
-        .app_id
-        .iter()
-        .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
-        .collect();
-
-    let title_regexes: Vec<Regex> = cli
-        .title
-        .iter()
-        .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
-        .collect();
-
-    let target_ids: Vec<u64> = cli.id;
+    let matcher = Matcher {
+        app_id_regexes: cli
+            .app_id
+            .iter()
+            .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
+            .collect(),
+        title_regexes: cli
+            .title
+            .iter()
+            .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
+            .collect(),
+        target_ids: cli.id,
+    };
 
     let json = cli.json;
     let verbose = cli.verbose;
-    let json_verbose = json && verbose;
+
+    let mut state = WindowState {
+        windows: HashMap::new(),
+        current_focused_window_id: None,
+    };
+
+    let logger = Logger::new(verbose, json);
 
     let mut socket = Socket::connect()?;
-    if json_verbose {
-        println!("{}", serde_json::json!({"event": "connected"}));
-    } else if verbose {
-        eprintln!("Connected to niri IPC socket");
-    }
-
-    let mut windows: HashMap<u64, Window> = HashMap::new();
-    let mut current_focused_window_id: Option<u64> = None;
+    logger.log_connected();
 
     // Get current window list to populate cache
     let reply = socket.send(Request::Windows)?;
@@ -72,21 +71,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for window in win_list {
             let app_id = window.app_id.clone();
             let title = window.title.clone();
-            windows.insert(window.id, Window {
+            state.windows.insert(window.id, Window {
                 id: window.id,
                 app_id: app_id.clone(),
                 title: title.clone(),
             });
-            if json_verbose {
-                println!("{}", serde_json::json!({
-                    "event": "window-loaded",
-                    "id": window.id,
-                    "app_id": app_id,
-                    "title": title
-                }));
-            } else if verbose {
-                eprintln!("Window loaded: id={}, app_id={:?}, title={:?}", window.id, app_id, title);
-            }
+            logger.log_window_loaded(&Window {
+                id: window.id,
+                app_id,
+                title,
+            });
         }
     }
 
@@ -100,11 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    if json_verbose {
-        println!("{}", serde_json::json!({"event": "streaming"}));
-    } else if verbose {
-        eprintln!("Event stream started");
-    }
+    logger.log_streaming();
 
     let mut read_event = socket.read_events();
 
@@ -113,14 +103,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(event) => {
                 if let Err(e) = handle_event(
                     event,
-                    &mut windows,
-                    &mut current_focused_window_id,
-                    &app_id_regexes,
-                    &title_regexes,
-                    &target_ids,
-                    verbose,
-                    json,
-                    json_verbose,
+                    &mut state,
+                    &matcher,
+                    &logger,
                 ) {
                     if json {
                         eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
@@ -145,33 +130,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn handle_event(
     event: Event,
-    windows: &mut HashMap<u64, Window>,
-    current_focused_window_id: &mut Option<u64>,
-    app_id_regexes: &[Regex],
-    title_regexes: &[Regex],
-    target_ids: &[u64],
-    verbose: bool,
-    json: bool,
-    json_verbose: bool,
+    state: &mut WindowState,
+    matcher: &Matcher,
+    logger: &Logger,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match event {
         Event::WindowOpenedOrChanged { window } => {
-            if json_verbose {
-                println!("{}", serde_json::json!({
-                    "event": "window-changed",
-                    "id": window.id,
-                    "title": window.title,
-                    "app_id": window.app_id
-                }));
-            } else if verbose {
-                eprintln!(
-                    "Window changed: id={}, title={:?}, app_id={:?}",
-                    window.id,
-                    window.title,
-                    window.app_id
-                );
-            }
-            windows.insert(window.id, Window {
+            logger.log_window_changed(&Window {
+                id: window.id,
+                app_id: window.app_id.clone(),
+                title: window.title.clone(),
+            });
+            state.windows.insert(window.id, Window {
                 id: window.id,
                 app_id: window.app_id,
                 title: window.title,
@@ -179,73 +149,19 @@ fn handle_event(
         }
         Event::WindowFocusChanged { id } => {
             let new_window_id = id;
+            let window = new_window_id.and_then(|wid| state.windows.get(&wid));
+            logger.log_focus_change(new_window_id, window);
 
-            if json_verbose {
-                if let Some(window_id) = new_window_id {
-                    if let Some(window) = windows.get(&window_id) {
-                        println!("{}", serde_json::json!({
-                            "event": "focus-change",
-                            "id": window_id,
-                            "title": window.title,
-                            "app_id": window.app_id
-                        }));
-                    } else {
-                        println!("{}", serde_json::json!({
-                            "event": "focus-change",
-                            "id": window_id,
-                            "title": null,
-                            "app_id": null
-                        }));
-                    }
-                } else {
-                    println!("{}", serde_json::json!({
-                        "event": "focus-change",
-                        "id": null
-                    }));
-                }
-            } else if verbose {
-                let id_str = id.map(|i| i.to_string()).unwrap_or_else(|| "None".to_string());
-                if let Some(window_id) = new_window_id {
-                    if let Some(window) = windows.get(&window_id) {
-                        eprintln!("Window focus changed: id={}, title={:?}, app_id={:?}", id_str, window.title, window.app_id);
-                    } else {
-                        eprintln!("Window focus changed: {} (window info not available yet)", id_str);
-                    }
-                } else {
-                    eprintln!("Window focus changed: {}", id_str);
-                }
-            }
-
-            if *current_focused_window_id == new_window_id {
+            if state.current_focused_window_id == new_window_id {
                 return Ok(());
             }
 
-            *current_focused_window_id = new_window_id;
+            state.current_focused_window_id = new_window_id;
 
             if let Some(window_id) = new_window_id {
-                if let Some(window) = windows.get(&window_id) {
-                    let match_type = window_matches(
-                        window,
-                        app_id_regexes,
-                        title_regexes,
-                        target_ids,
-                    );
-
-                    if let Some(mt) = match_type {
-                        if json {
-                            println!("{}", serde_json::json!({
-                                "event": "window-matched",
-                                "match_type": mt,
-                                "id": window_id,
-                                "app_id": window.app_id,
-                                "title": window.title
-                            }));
-                        } else if verbose {
-                            eprintln!(
-                                "Window matched! match_type={}, id={}, app_id={:?}, title={:?}",
-                                mt, window_id, window.app_id, window.title
-                            );
-                        }
+                if let Some(window) = state.windows.get(&window_id) {
+                    if let Some(mt) = matcher.matches(window) {
+                        logger.log_window_matched(window, &mt);
                         send_set_dynamic_cast_window(window_id)?;
                     }
                 }
@@ -262,33 +178,158 @@ struct Window {
     title: Option<String>,
 }
 
-fn window_matches(
-    window: &Window,
-    app_id_regexes: &[Regex],
-    title_regexes: &[Regex],
-    target_ids: &[u64],
-) -> Option<String> {
-    if target_ids.contains(&window.id) {
-        return Some("id".to_string());
+struct Matcher {
+    app_id_regexes: Vec<Regex>,
+    title_regexes: Vec<Regex>,
+    target_ids: Vec<u64>,
+}
+
+struct WindowState {
+    windows: HashMap<u64, Window>,
+    current_focused_window_id: Option<u64>,
+}
+
+struct Logger {
+    verbose: bool,
+    json: bool,
+}
+
+impl Logger {
+    fn new(verbose: bool, json: bool) -> Self {
+        Logger { verbose, json }
     }
 
-    if let Some(app_id) = &window.app_id {
-        for regex in app_id_regexes {
-            if regex.is_match(app_id) {
-                return Some("app_id".to_string());
+    fn json_verbose(&self) -> bool {
+        self.json && self.verbose
+    }
+
+    fn log_connected(&self) {
+        if self.json_verbose() {
+            println!("{}", serde_json::json!({"event": "connected"}));
+        } else if self.verbose {
+            eprintln!("Connected to niri IPC socket");
+        }
+    }
+
+    fn log_window_loaded(&self, window: &Window) {
+        if self.json_verbose() {
+            println!("{}", serde_json::json!({
+                "event": "window-loaded",
+                "id": window.id,
+                "app_id": window.app_id,
+                "title": window.title
+            }));
+        } else if self.verbose {
+            eprintln!("Window loaded: id={}, app_id={:?}, title={:?}", window.id, window.app_id, window.title);
+        }
+    }
+
+    fn log_streaming(&self) {
+        if self.json_verbose() {
+            println!("{}", serde_json::json!({"event": "streaming"}));
+        } else if self.verbose {
+            eprintln!("Event stream started");
+        }
+    }
+
+    fn log_window_changed(&self, window: &Window) {
+        if self.json_verbose() {
+            println!("{}", serde_json::json!({
+                "event": "window-changed",
+                "id": window.id,
+                "title": window.title,
+                "app_id": window.app_id
+            }));
+        } else if self.verbose {
+            eprintln!(
+                "Window changed: id={}, title={:?}, app_id={:?}",
+                window.id,
+                window.title,
+                window.app_id
+            );
+        }
+    }
+
+    fn log_focus_change(&self, window_id: Option<u64>, window: Option<&Window>) {
+        if self.json_verbose() {
+            if let Some(id) = window_id {
+                if let Some(w) = window {
+                    println!("{}", serde_json::json!({
+                        "event": "focus-change",
+                        "id": id,
+                        "title": w.title,
+                        "app_id": w.app_id
+                    }));
+                } else {
+                    println!("{}", serde_json::json!({
+                        "event": "focus-change",
+                        "id": id,
+                        "title": null,
+                        "app_id": null
+                    }));
+                }
+            } else {
+                println!("{}", serde_json::json!({
+                    "event": "focus-change",
+                    "id": null
+                }));
+            }
+        } else if self.verbose {
+            let id_str = window_id.map(|i| i.to_string()).unwrap_or_else(|| "None".to_string());
+            if let Some(_id) = window_id {
+                if let Some(w) = window {
+                    eprintln!("Window focus changed: id={}, title={:?}, app_id={:?}", id_str, w.title, w.app_id);
+                } else {
+                    eprintln!("Window focus changed: {} (window info not available yet)", id_str);
+                }
+            } else {
+                eprintln!("Window focus changed: {}", id_str);
             }
         }
     }
 
-    if let Some(title) = &window.title {
-        for regex in title_regexes {
-            if regex.is_match(title) {
-                return Some("title".to_string());
-            }
+    fn log_window_matched(&self, window: &Window, match_type: &str) {
+        if self.json {
+            println!("{}", serde_json::json!({
+                "event": "window-matched",
+                "match_type": match_type,
+                "id": window.id,
+                "app_id": window.app_id,
+                "title": window.title
+            }));
+        } else if self.verbose {
+            eprintln!(
+                "Window matched! match_type={}, id={}, app_id={:?}, title={:?}",
+                match_type, window.id, window.app_id, window.title
+            );
         }
     }
+}
 
-    None
+impl Matcher {
+    fn matches(&self, window: &Window) -> Option<String> {
+        if self.target_ids.contains(&window.id) {
+            return Some("id".to_string());
+        }
+
+        if let Some(app_id) = &window.app_id {
+            for regex in &self.app_id_regexes {
+                if regex.is_match(app_id) {
+                    return Some("app_id".to_string());
+                }
+            }
+        }
+
+        if let Some(title) = &window.title {
+            for regex in &self.title_regexes {
+                if regex.is_match(title) {
+                    return Some("title".to_string());
+                }
+            }
+        }
+
+        None
+    }
 }
 
 fn send_set_dynamic_cast_window(window_id: u64) -> Result<(), Box<dyn std::error::Error>> {
