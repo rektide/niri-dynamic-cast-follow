@@ -6,6 +6,7 @@ use serde_json;
 
 mod logger;
 mod matcher;
+mod monitor;
 mod target;
 mod window;
 use logger::Logger;
@@ -65,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let logger = logger::GenericLogger::new(verbose, json);
 
     let mut socket = Socket::connect()?;
-    logger.log_connected();
+    <logger::GenericLogger as Logger<Window>>::log_connected(&logger);
 
     window::populate_window_cache(&mut socket, &mut state, &logger)?;
 
@@ -79,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    logger.log_streaming();
+    <logger::GenericLogger as Logger<Window>>::log_streaming(&logger);
 
     let mut read_event = socket.read_events();
 
