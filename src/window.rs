@@ -1,12 +1,20 @@
+use crate::target::Target;
 use niri_ipc::{Action, Request, Response};
 use niri_ipc::socket::Socket;
 use regex::Regex;
-use std::collections::HashMap;
 
 pub struct Window {
     pub id: u64,
     pub app_id: Option<String>,
     pub title: Option<String>,
+}
+
+impl Target for Window {
+    type Id = u64;
+
+    fn id(&self) -> Self::Id {
+        self.id
+    }
 }
 
 pub struct WindowMatcher {
@@ -53,19 +61,7 @@ impl WindowMatcher {
     }
 }
 
-pub struct WindowState {
-    pub windows: HashMap<u64, Window>,
-    pub current_focused_window_id: Option<u64>,
-}
-
-impl WindowState {
-    pub fn new() -> Self {
-        WindowState {
-            windows: HashMap::new(),
-            current_focused_window_id: None,
-        }
-    }
-}
+pub type WindowState = crate::target::TargetState<Window>;
 
 pub fn populate_window_cache(
     socket: &mut Socket,
@@ -77,7 +73,7 @@ pub fn populate_window_cache(
         for window in win_list {
             let app_id = window.app_id.clone();
             let title = window.title.clone();
-            state.windows.insert(window.id, Window {
+            state.targets.insert(window.id, Window {
                 id: window.id,
                 app_id: app_id.clone(),
                 title: title.clone(),

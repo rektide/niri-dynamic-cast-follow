@@ -122,7 +122,7 @@ fn handle_event(
                 app_id: window.app_id.clone(),
                 title: window.title.clone(),
             });
-            state.windows.insert(window.id, window::Window {
+            state.targets.insert(window.id, window::Window {
                 id: window.id,
                 app_id: window.app_id,
                 title: window.title,
@@ -130,17 +130,17 @@ fn handle_event(
         }
         Event::WindowFocusChanged { id } => {
             let new_window_id = id;
-            let window = new_window_id.and_then(|wid| state.windows.get(&wid));
+            let window = new_window_id.and_then(|wid| state.targets.get(&wid));
             logger.log_focus_change(new_window_id, window);
 
-            if state.current_focused_window_id == new_window_id {
+            if state.current_focused_id == new_window_id {
                 return Ok(());
             }
 
-            state.current_focused_window_id = new_window_id;
+            state.current_focused_id = new_window_id;
 
             if let Some(window_id) = new_window_id {
-                if let Some(window) = state.windows.get(&window_id) {
+                if let Some(window) = state.targets.get(&window_id) {
                     if let Some(mt) = matcher.matches(window) {
                         logger.log_window_matched(window, &mt);
                         window::send_set_dynamic_cast_window(window_id)?;
