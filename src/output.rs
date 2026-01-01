@@ -79,6 +79,10 @@ impl OutputState {
         self.window_to_workspace.insert(window_id, workspace_id);
     }
 
+    pub fn remove_window(&mut self, window_id: u64) {
+        self.window_to_workspace.remove(&window_id);
+    }
+
     pub fn get_output_for_workspace(&self, workspace_id: u64) -> Option<u64> {
         self.workspace_to_output.get(&workspace_id).copied()
     }
@@ -132,6 +136,16 @@ pub fn populate_output_cache(
             logger.log_target_loaded(&output);
         }
     }
+
+    let windows_reply = socket.send(niri_ipc::Request::Windows)?;
+    if let Ok(niri_ipc::Response::Windows(windows)) = windows_reply {
+        for window in &windows {
+            if let Some(workspace_id) = window.workspace_id {
+                state.update_window_workspace(window.id, workspace_id);
+            }
+        }
+    }
+
     Ok(())
 }
 

@@ -170,8 +170,20 @@ fn handle_output_event(
     _json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match event {
+        Event::WindowsChanged { windows } => {
+            // Update window-to-workspace mappings from complete list
+            for window in &windows {
+                if let Some(workspace_id) = window.workspace_id {
+                    state.update_window_workspace(window.id, workspace_id);
+                }
+            }
+        }
+        Event::WindowClosed { id } => {
+            // Remove window from mapping when closed
+            state.remove_window(id);
+        }
         Event::WindowOpenedOrChanged { window } => {
-            // Track window-to-workspace mapping
+            // Track window-to-workspace mapping for single window updates
             if let Some(workspace_id) = window.workspace_id {
                 state.update_window_workspace(window.id, workspace_id);
             }
