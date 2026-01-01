@@ -1,6 +1,14 @@
 # niri-dynamic-cast-follow
 
-A Rust CLI tool that automatically switches niri's dynamic screencast target when you focus on specific windows.
+Automatically switches niri's dynamic screencast target for a set of windows you specify.
+
+When you focus on a matching window, it becomes the dynamic cast target. No keybinds required.
+
+## Motivation
+
+This tool addresses the need for automatic dynamic casting as discussed in [YaLTeR/niri#3126](https://github.com/YaLTeR/niri/discussions/3126).
+
+When giving live demos or streaming, manually switching cast targets with keybinds between windows (e.g., terminal and browser) is error-prone and easy to forget. This program lets you specify which windows should be cast, and automatically switches to whichever one is currently focused.
 
 ## Features
 
@@ -26,47 +34,44 @@ sudo cp target/release/niri-dynamic-cast-follow /usr/local/bin/
 **Match by app-id:**
 
 ```bash
+# Multiple -a flags (tracks windows matching ANY of these app-ids)
+niri-dynamic-cast-follow -a "firefox" -a "google-chrome" -a "kitty"
+
 # Track all Google Chrome windows
 niri-dynamic-cast-follow --app-id "google-chrome"
 
-# Track Firefox and Chrome (can specify multiple patterns)
-niri-dynamic-cast-follow --app-id "firefox" --app-id "google-chrome"
-
 # Use regex for more complex matching
-niri-dynamic-cast-follow --app-id "^google-"
+niri-dynamic-cast-follow -a "^google-"
 ```
 
 **Match by window title:**
 
 ```bash
+# Multiple -t flags (tracks windows matching ANY of these titles)
+niri-dynamic-cast-follow -t "YouTube" -t "Twitch" -t "Discord"
+
 # Track windows with "YouTube" in title
 niri-dynamic-cast-follow --title "YouTube"
 
 # Track windows matching a pattern
-niri-dynamic-cast-follow --title "^Discord - "
-
-# Combine title patterns
-niri-dynamic-cast-follow --title "YouTube" --title "Twitch"
+niri-dynamic-cast-follow -t "^Discord - "
 ```
 
 **Match by exact window ID:**
 
 ```bash
+# Multiple -i flags (tracks specific window IDs)
+niri-dynamic-cast-follow -i 42 -i 137
+
 # Track a specific window by its ID
 niri-dynamic-cast-follow --id 42
-
-# Track multiple specific windows
-niri-dynamic-cast-follow --id 42 --id 137
 ```
 
 **Combine multiple matching criteria:**
 
 ```bash
-# Match by app-id OR title OR id
-niri-dynamic-cast-follow \
-  --app-id "^google-chrome" \
-  --title ".*Meeting.*" \
-  --id 42
+# Mix short and long flags as preferred
+niri-dynamic-cast-follow -a "firefox" -a "google-chrome" -t "YouTube" -i 42
 ```
 
 **Verbose mode for debugging:**
@@ -78,10 +83,10 @@ niri-dynamic-cast-follow --app-id "firefox" --verbose
 
 ### Finding Window Information
 
-To find window app-id, title, or ID for matching:
+Use `niri msg windows` to find app-id patterns, title patterns, or window IDs for matching:
 
 ```bash
-# List all windows
+# List all windows to see app-ids and titles
 niri msg windows
 
 # Get focused window info
