@@ -4,6 +4,7 @@ use niri_ipc::socket::Socket;
 use regex::Regex;
 use serde_json;
 
+mod target;
 mod window;
 use window::Window;
 
