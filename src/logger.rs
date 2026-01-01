@@ -1,5 +1,5 @@
 use serde_json;
-use crate::monitor::Monitor;
+use crate::output::Output;
 use crate::window::Window;
 
 pub trait Logger<T> {
@@ -130,7 +130,7 @@ impl Logger<Window> for GenericLogger {
     }
 }
 
-impl Logger<Monitor> for GenericLogger {
+impl Logger<Output> for GenericLogger {
     fn log_connected(&self) {
         if self.json_verbose() {
             println!("{}", serde_json::json!({"event": "connected"}));
@@ -147,53 +147,48 @@ impl Logger<Monitor> for GenericLogger {
         }
     }
 
-    fn log_target_loaded(&self, monitor: &Monitor) {
+    fn log_target_loaded(&self, output: &Output) {
         if self.json_verbose() {
             println!("{}", serde_json::json!({
-                "event": "monitor-loaded",
-                "id": monitor.id,
-                "name": monitor.name,
-                "description": monitor.description
+                "event": "output-loaded",
+                "id": output.id,
+                "name": output.name
             }));
         } else if self.verbose {
-            eprintln!("Monitor loaded: id={}, name={:?}, description={:?}", monitor.id, monitor.name, monitor.description);
+            eprintln!("Output loaded: id={}, name={:?}", output.id, output.name);
         }
     }
 
-    fn log_target_changed(&self, monitor: &Monitor) {
+    fn log_target_changed(&self, output: &Output) {
         if self.json_verbose() {
             println!("{}", serde_json::json!({
-                "event": "monitor-changed",
-                "id": monitor.id,
-                "name": monitor.name,
-                "description": monitor.description
+                "event": "output-changed",
+                "id": output.id,
+                "name": output.name
             }));
         } else if self.verbose {
             eprintln!(
-                "Monitor changed: id={}, name={:?}, description={:?}",
-                monitor.id,
-                monitor.name,
-                monitor.description
+                "Output changed: id={}, name={:?}",
+                output.id,
+                output.name
             );
         }
     }
 
-    fn log_focus_change(&self, monitor_id: Option<u64>, monitor: Option<&Monitor>) {
+    fn log_focus_change(&self, output_id: Option<u64>, output: Option<&Output>) {
         if self.json_verbose() {
-            if let Some(id) = monitor_id {
-                if let Some(m) = monitor {
+            if let Some(id) = output_id {
+                if let Some(o) = output {
                     println!("{}", serde_json::json!({
                         "event": "focus-change",
                         "id": id,
-                        "name": m.name,
-                        "description": m.description
+                        "name": o.name
                     }));
                 } else {
                     println!("{}", serde_json::json!({
                         "event": "focus-change",
                         "id": id,
-                        "name": null,
-                        "description": null
+                        "name": null
                     }));
                 }
             } else {
@@ -203,32 +198,31 @@ impl Logger<Monitor> for GenericLogger {
                 }));
             }
         } else if self.verbose {
-            let id_str = monitor_id.map(|i| i.to_string()).unwrap_or_else(|| "None".to_string());
-            if let Some(_id) = monitor_id {
-                if let Some(m) = monitor {
-                    eprintln!("Monitor focus changed: id={}, name={:?}, description={:?}", id_str, m.name, m.description);
+            let id_str = output_id.map(|i| i.to_string()).unwrap_or_else(|| "None".to_string());
+            if let Some(_id) = output_id {
+                if let Some(o) = output {
+                    eprintln!("Output focus changed: id={}, name={:?}", id_str, o.name);
                 } else {
-                    eprintln!("Monitor focus changed: {} (monitor info not available yet)", id_str);
+                    eprintln!("Output focus changed: {} (output info not available yet)", id_str);
                 }
             } else {
-                eprintln!("Monitor focus changed: {}", id_str);
+                eprintln!("Output focus changed: {}", id_str);
             }
         }
     }
 
-    fn log_target_matched(&self, monitor: &Monitor, match_type: &str) {
+    fn log_target_matched(&self, output: &Output, match_type: &str) {
         if self.json {
             println!("{}", serde_json::json!({
-                "event": "monitor-matched",
+                "event": "output-matched",
                 "match_type": match_type,
-                "id": monitor.id,
-                "name": monitor.name,
-                "description": monitor.description
+                "id": output.id,
+                "name": output.name
             }));
         } else if self.verbose {
             eprintln!(
-                "Monitor matched! match_type={}, id={}, name={:?}, description={:?}",
-                match_type, monitor.id, monitor.name, monitor.description
+                "Output matched! match_type={}, id={}, name={:?}",
+                match_type, output.id, output.name
             );
         }
     }

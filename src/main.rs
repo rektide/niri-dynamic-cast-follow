@@ -6,7 +6,7 @@ use serde_json;
 
 mod logger;
 mod matcher;
-mod monitor;
+mod output;
 mod target;
 mod window;
 use logger::Logger;
@@ -28,6 +28,14 @@ struct Cli {
     #[arg(long, short = 'i')]
     id: Vec<u64>,
 
+    /// Output name patterns to match (regex supported)
+    #[arg(long, short = 'o')]
+    output: Vec<String>,
+
+    /// Specific output IDs to match
+    #[arg(long, short = 'O')]
+    output_id: Vec<u64>,
+
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
@@ -40,75 +48,118 @@ struct Cli {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    if cli.app_id.is_empty() && cli.title.is_empty() && cli.id.is_empty() {
-        eprintln!("Error: at least one matching criterion must be provided");
-        eprintln!("Use --app-id, --title, or --id");
+    let has_window_flags = !cli.app_id.is_empty() || !cli.title.is_empty() || !cli.id.is_empty();
+    let has_output_flags = !cli.output.is_empty() || !cli.output_id.is_empty();
+
+    if has_window_flags && has_output_flags {
+        eprintln!("Error: cannot mix window and output matching criteria");
+        eprintln!("Use either window flags (--app-id, --title, --id) OR output flags (--output, --output-id)");
         std::process::exit(1);
     }
 
-    let matcher = window::WindowMatcher::new(
-        cli.app_id
-            .iter()
-            .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
-            .collect(),
-        cli.title
-            .iter()
-            .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
-            .collect(),
-        cli.id,
-    );
+    if !has_window_flags && !has_output_flags {
+        eprintln!("Error: at least one matching criterion must be provided");
+        eprintln!("Window: --app-id, --title, or --id");
+        eprintln!("Output: --output or --output-id");
+        std::process::exit(1);
+    }
 
     let json = cli.json;
     let verbose = cli.verbose;
 
-    let mut state = window::WindowState::new();
-
     let logger = logger::GenericLogger::new(verbose, json);
 
-    let mut socket = Socket::connect()?;
-    <logger::GenericLogger as Logger<Window>>::log_connected(&logger);
+    if has_window_flags {
+        let matcher = window::WindowMatcher::new(
+            cli.app_id
+                .iter()
+                .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
+                .collect(),
+            cli.title
+                .iter()
+                .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
+                .collect(),
+            cli.id,
+        );
 
-    window::populate_window_cache(&mut socket, &mut state, &logger)?;
+        let mut state = window::WindowState::new();
 
-    let reply = socket.send(Request::EventStream)?;
-    if !matches!(reply, Ok(Response::Handled)) {
-        if json {
-            eprintln!("{}", serde_json::json!({"event": "error", "message": "Failed to start event stream"}));
-        } else {
-            eprintln!("Failed to start event stream: {:?}", reply);
+        let mut socket = Socket::connect()?;
+        <logger::GenericLogger as Logger<Window>>::log_connected(&logger);
+
+        window::populate_window_cache(&mut socket, &mut state, &logger)?;
+
+        let reply = socket.send(Request::EventStream)?;
+        if !matches!(reply, Ok(Response::Handled)) {
+            if json {
+                eprintln!("{}", serde_json::json!({"event": "error", "message": "Failed to start event stream"}));
+            } else {
+                eprintln!("Failed to start event stream: {:?}", reply);
+            }
+            std::process::exit(1);
         }
-        std::process::exit(1);
-    }
 
-    <logger::GenericLogger as Logger<Window>>::log_streaming(&logger);
+        <logger::GenericLogger as Logger<Window>>::log_streaming(&logger);
 
-    let mut read_event = socket.read_events();
+        let mut read_event = socket.read_events();
 
-    loop {
-        match read_event() {
-            Ok(event) => {
-                if let Err(e) = handle_event(
-                    event,
-                    &mut state,
-                    &matcher,
-                    &logger,
-                ) {
+        loop {
+            match read_event() {
+                Ok(event) => {
+                    if let Err(e) = handle_event(
+                        event,
+                        &mut state,
+                        &matcher,
+                        &logger,
+                    ) {
+                        if json {
+                            eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
+                        } else {
+                            eprintln!("Error handling event: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
                     if json {
                         eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
                     } else {
-                        eprintln!("Error handling event: {}", e);
+                        eprintln!("Error reading event: {}", e);
                     }
+                    break;
                 }
-            }
-            Err(e) => {
-                if json {
-                    eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
-                } else {
-                    eprintln!("Error reading event: {}", e);
-                }
-                break;
             }
         }
+    } else {
+        let matcher = output::OutputMatcher::new(
+            cli.output
+                .iter()
+                .map(|pattern| Regex::new(pattern).expect("Invalid regex"))
+                .collect(),
+            cli.output_id,
+        );
+
+        let mut state = output::OutputState::new();
+
+        let mut socket = Socket::connect()?;
+        <logger::GenericLogger as Logger<output::Output>>::log_connected(&logger);
+
+        let outputs = Vec::new();
+        output::populate_output_cache(&mut state, outputs, &logger)?;
+
+        let reply = socket.send(Request::EventStream)?;
+        if !matches!(reply, Ok(Response::Handled)) {
+            if json {
+                eprintln!("{}", serde_json::json!({"event": "error", "message": "Failed to start event stream"}));
+            } else {
+                eprintln!("Failed to start event stream: {:?}", reply);
+            }
+            std::process::exit(1);
+        }
+
+        <logger::GenericLogger as Logger<output::Output>>::log_streaming(&logger);
+
+        eprintln!("Output mode not yet fully implemented");
+        std::process::exit(1);
     }
 
     Ok(())
