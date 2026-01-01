@@ -2,7 +2,7 @@ use crate::logger::Logger;
 use crate::matcher::Matcher;
 use crate::target::Target;
 use regex::Regex;
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
 #[derive(Clone)]
@@ -54,7 +54,60 @@ impl Matcher<Output> for OutputMatcher {
     }
 }
 
-pub type OutputState = crate::target::TargetState<Output>;
+pub struct OutputState {
+    pub targets: HashMap<u64, Output>,
+    pub current_focused_id: Option<u64>,
+    workspace_to_output: HashMap<u64, u64>,
+    window_to_workspace: HashMap<u64, u64>,
+}
+
+impl OutputState {
+    pub fn new() -> Self {
+        OutputState {
+            targets: HashMap::new(),
+            current_focused_id: None,
+            workspace_to_output: HashMap::new(),
+            window_to_workspace: HashMap::new(),
+        }
+    }
+
+    pub fn update_workspace_output(&mut self, workspace_id: u64, output_id: u64) {
+        self.workspace_to_output.insert(workspace_id, output_id);
+    }
+
+    pub fn update_window_workspace(&mut self, window_id: u64, workspace_id: u64) {
+        self.window_to_workspace.insert(window_id, workspace_id);
+    }
+
+    pub fn get_output_for_workspace(&self, workspace_id: u64) -> Option<u64> {
+        self.workspace_to_output.get(&workspace_id).copied()
+    }
+
+    pub fn get_workspace_for_window(&self, window_id: u64) -> Option<u64> {
+        self.window_to_workspace.get(&window_id).copied()
+    }
+}
+
+impl crate::target::FollowerState for OutputState {
+    type Target = Output;
+    type Id = u64;
+
+    fn get_current_focused_id(&self) -> Option<Self::Id> {
+        self.current_focused_id
+    }
+
+    fn set_current_focused_id(&mut self, id: Option<Self::Id>) {
+        self.current_focused_id = id;
+    }
+
+    fn get_targets(&self) -> &HashMap<Self::Id, Self::Target> {
+        &self.targets
+    }
+
+    fn get_targets_mut(&mut self) -> &mut HashMap<Self::Id, Self::Target> {
+        &mut self.targets
+    }
+}
 
 pub fn get_output_id_from_name(name: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
