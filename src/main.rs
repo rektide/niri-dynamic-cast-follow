@@ -64,6 +64,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let mut windows: HashMap<u64, (Option<String>, Option<String>)> = HashMap::new();
+    let mut current_focused_window_id: Option<u64> = None;
+
+    // Get current window list to populate cache
+    let reply = socket.send(Request::Windows)?;
+    if let Ok(Response::Windows(win_list)) = reply {
+        for window in win_list {
+            windows.insert(window.id, (window.app_id.clone(), window.title.clone()));
+            if verbose && json {
+                println!("{}", serde_json::json!({
+                    "event": "window-loaded",
+                    "id": window.id,
+                    "app_id": window.app_id,
+                    "title": window.title
+                }));
+            }
+        }
+    }
+
     let reply = socket.send(Request::EventStream)?;
     if !matches!(reply, Ok(Response::Handled)) {
         if json {
@@ -83,8 +102,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut read_event = socket.read_events();
-    let mut windows: HashMap<u64, (Option<String>, Option<String>)> = HashMap::new();
-    let mut current_focused_window_id: Option<u64> = None;
 
     loop {
         match read_event() {
@@ -271,9 +288,9 @@ fn send_set_dynamic_cast_window(window_id: u64) -> Result<(), Box<dyn std::error
     let mut action_socket = Socket::connect()?;
     let action = Action::SetDynamicCastWindow { id: Some(window_id) };
     let request = Request::Action(action);
-    
+
     let reply = action_socket.send(request)?;
-    
+
     match reply {
         Ok(Response::Handled) => Ok(()),
         Ok(resp) => {
