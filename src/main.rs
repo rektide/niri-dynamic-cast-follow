@@ -1,6 +1,6 @@
 use clap::Parser;
 use niri_ipc::socket::Socket;
-use niri_ipc::{Event, Request, Response};
+use niri_ipc::Event;
 use regex::Regex;
 use serde_json;
 
@@ -11,7 +11,6 @@ mod output;
 mod target;
 mod window;
 use follower::Follower;
-use logger::Logger;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -69,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let logger = logger::GenericLogger::new(verbose, json);
 
-    let mut socket = Socket::connect()?;
+    let socket = Socket::connect()?;
 
     if has_window_flags {
         let matcher = window::WindowMatcher::new(
@@ -102,58 +101,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             cli.output_id,
         );
 
-        let mut state = output::OutputState::new();
+        let state = output::OutputState::new();
 
-        <logger::GenericLogger as Logger<output::Output>>::log_connected(&logger);
+        let follower = Follower::new(state, Box::new(matcher), Box::new(logger), json);
 
-        let outputs = Vec::new();
-        output::populate_output_cache(&mut state, outputs, &logger)?;
-
-        let reply = socket.send(Request::EventStream)?;
-        if !matches!(reply, Ok(Response::Handled)) {
-            if json {
-                eprintln!(
-                    "{}",
-                    serde_json::json!({"event": "error", "message": "Failed to start event stream"})
-                );
-            } else {
-                eprintln!("Failed to start event stream: {:?}", reply);
-            }
-            std::process::exit(1);
-        }
-
-        <logger::GenericLogger as Logger<output::Output>>::log_streaming(&logger);
-
-        let mut read_event = socket.read_events();
-
-        loop {
-            match read_event() {
-                Ok(event) => {
-                    if let Err(e) = handle_output_event(event, &mut state, &matcher, &logger, json)
-                    {
-                        if json {
-                            eprintln!(
-                                "{}",
-                                serde_json::json!({"event": "error", "message": e.to_string()})
-                            );
-                        } else {
-                            eprintln!("Error handling event: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    if json {
-                        eprintln!(
-                            "{}",
-                            serde_json::json!({"event": "error", "message": e.to_string()})
-                        );
-                    } else {
-                        eprintln!("Error reading event: {}", e);
-                    }
-                    break;
-                }
-            }
-        }
+        follower.run(
+            socket,
+            output::populate_output_cache,
+            handle_output_event,
+        )?
     }
 
     Ok(())
@@ -214,5 +170,15 @@ fn handle_output_event(
     _logger: &dyn logger::Logger<output::Output>,
     _json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    match _event {
+        _ => {
+            if _json {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"event": "info", "message": "Output mode not yet implemented"})
+                );
+            }
+        }
+    }
     Ok(())
 }

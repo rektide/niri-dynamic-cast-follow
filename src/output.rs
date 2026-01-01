@@ -55,14 +55,11 @@ impl Matcher<Output> for OutputMatcher {
 pub type OutputState = crate::target::TargetState<Output>;
 
 pub fn populate_output_cache(
+    _socket: &mut niri_ipc::socket::Socket,
     state: &mut OutputState,
-    outputs: Vec<Output>,
-    logger: &impl Logger<Output>,
+    logger: &dyn Logger<Output>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for output in outputs {
-        state.targets.insert(output.id, output.clone());
-        logger.log_target_loaded(&output);
-    }
+    let _ = (state, logger);
     Ok(())
 }
 
