@@ -63,23 +63,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Connected to niri IPC socket");
     }
 
-    let mut windows: HashMap<u64, (Option<String>, Option<String>)> = HashMap::new();
+    let mut windows: HashMap<u64, Window> = HashMap::new();
     let mut current_focused_window_id: Option<u64> = None;
 
     // Get current window list to populate cache
     let reply = socket.send(Request::Windows)?;
     if let Ok(Response::Windows(win_list)) = reply {
         for window in win_list {
-            windows.insert(window.id, (window.app_id.clone(), window.title.clone()));
+            let app_id = window.app_id.clone();
+            let title = window.title.clone();
+            windows.insert(window.id, Window {
+                id: window.id,
+                app_id: app_id.clone(),
+                title: title.clone(),
+            });
             if json_verbose {
                 println!("{}", serde_json::json!({
                     "event": "window-loaded",
                     "id": window.id,
-                    "app_id": window.app_id,
-                    "title": window.title
+                    "app_id": app_id,
+                    "title": title
                 }));
             } else if verbose {
-                eprintln!("Window loaded: id={}, app_id={:?}, title={:?}", window.id, window.app_id, window.title);
+                eprintln!("Window loaded: id={}, app_id={:?}, title={:?}", window.id, app_id, title);
             }
         }
     }
@@ -139,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn handle_event(
     event: Event,
-    windows: &mut HashMap<u64, (Option<String>, Option<String>)>,
+    windows: &mut HashMap<u64, Window>,
     current_focused_window_id: &mut Option<u64>,
     app_id_regexes: &[Regex],
     title_regexes: &[Regex],
@@ -165,19 +171,23 @@ fn handle_event(
                     window.app_id
                 );
             }
-            windows.insert(window.id, (window.app_id, window.title));
+            windows.insert(window.id, Window {
+                id: window.id,
+                app_id: window.app_id,
+                title: window.title,
+            });
         }
         Event::WindowFocusChanged { id } => {
             let new_window_id = id;
 
             if json_verbose {
                 if let Some(window_id) = new_window_id {
-                    if let Some((app_id, title)) = windows.get(&window_id) {
+                    if let Some(window) = windows.get(&window_id) {
                         println!("{}", serde_json::json!({
                             "event": "focus-change",
                             "id": window_id,
-                            "title": title,
-                            "app_id": app_id
+                            "title": window.title,
+                            "app_id": window.app_id
                         }));
                     } else {
                         println!("{}", serde_json::json!({
@@ -196,8 +206,8 @@ fn handle_event(
             } else if verbose {
                 let id_str = id.map(|i| i.to_string()).unwrap_or_else(|| "None".to_string());
                 if let Some(window_id) = new_window_id {
-                    if let Some((app_id, title)) = windows.get(&window_id) {
-                        eprintln!("Window focus changed: id={}, title={:?}, app_id={:?}", id_str, title, app_id);
+                    if let Some(window) = windows.get(&window_id) {
+                        eprintln!("Window focus changed: id={}, title={:?}, app_id={:?}", id_str, window.title, window.app_id);
                     } else {
                         eprintln!("Window focus changed: {} (window info not available yet)", id_str);
                     }
@@ -213,11 +223,9 @@ fn handle_event(
             *current_focused_window_id = new_window_id;
 
             if let Some(window_id) = new_window_id {
-                if let Some((app_id, title)) = windows.get(&window_id) {
+                if let Some(window) = windows.get(&window_id) {
                     let match_type = window_matches(
-                        window_id,
-                        app_id,
-                        title,
+                        window,
                         app_id_regexes,
                         title_regexes,
                         target_ids,
@@ -229,13 +237,13 @@ fn handle_event(
                                 "event": "window-matched",
                                 "match_type": mt,
                                 "id": window_id,
-                                "app_id": app_id,
-                                "title": title
+                                "app_id": window.app_id,
+                                "title": window.title
                             }));
                         } else if verbose {
                             eprintln!(
                                 "Window matched! match_type={}, id={}, app_id={:?}, title={:?}",
-                                mt, window_id, app_id, title
+                                mt, window_id, window.app_id, window.title
                             );
                         }
                         send_set_dynamic_cast_window(window_id)?;
@@ -248,19 +256,23 @@ fn handle_event(
     Ok(())
 }
 
+struct Window {
+    id: u64,
+    app_id: Option<String>,
+    title: Option<String>,
+}
+
 fn window_matches(
-    window_id: u64,
-    app_id: &Option<String>,
-    title: &Option<String>,
+    window: &Window,
     app_id_regexes: &[Regex],
     title_regexes: &[Regex],
     target_ids: &[u64],
 ) -> Option<String> {
-    if target_ids.contains(&window_id) {
+    if target_ids.contains(&window.id) {
         return Some("id".to_string());
     }
 
-    if let Some(app_id) = app_id {
+    if let Some(app_id) = &window.app_id {
         for regex in app_id_regexes {
             if regex.is_match(app_id) {
                 return Some("app_id".to_string());
@@ -268,7 +280,7 @@ fn window_matches(
         }
     }
 
-    if let Some(title) = title {
+    if let Some(title) = &window.title {
         for regex in title_regexes {
             if regex.is_match(title) {
                 return Some("title".to_string());
