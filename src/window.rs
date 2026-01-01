@@ -5,6 +5,7 @@ use niri_ipc::{Action, Request, Response};
 use niri_ipc::socket::Socket;
 use regex::Regex;
 
+#[derive(Clone)]
 pub struct Window {
     pub id: u64,
     pub app_id: Option<String>,
@@ -70,7 +71,7 @@ pub type WindowState = crate::target::TargetState<Window>;
 pub fn populate_window_cache(
     socket: &mut Socket,
     state: &mut WindowState,
-    logger: &impl Logger<Window>,
+    logger: &dyn Logger<Window>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reply = socket.send(Request::Windows)?;
     if let Ok(Response::Windows(win_list)) = reply {

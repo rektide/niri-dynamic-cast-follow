@@ -1,28 +1,22 @@
 use niri_ipc::{Event, Request, Response};
 use niri_ipc::socket::Socket;
 use serde_json;
-use crate::target::Target;
 use crate::matcher::Matcher;
 use crate::logger::Logger;
+use crate::target::FollowerState;
 
-pub struct Follower<T>
-where
-    T: Target,
-{
-    state: T,
-    matcher: Box<dyn Matcher<T>>,
-    logger: Box<dyn Logger<T>>,
+pub struct Follower<S: FollowerState> {
+    state: S,
+    matcher: Box<dyn Matcher<S::Target>>,
+    logger: Box<dyn Logger<S::Target>>,
     json: bool,
 }
 
-impl<T> Follower<T>
-where
-    T: Target,
-{
+impl<S: FollowerState> Follower<S> {
     pub fn new(
-        state: T,
-        matcher: Box<dyn Matcher<T>>,
-        logger: Box<dyn Logger<T>>,
+        state: S,
+        matcher: Box<dyn Matcher<S::Target>>,
+        logger: Box<dyn Logger<S::Target>>,
         json: bool,
     ) -> Self {
         Follower {
@@ -33,18 +27,19 @@ where
         }
     }
 
-    pub fn run<F>(
+    pub fn run<F, H>(
         mut self,
-        socket: &mut Socket,
+        mut socket: Socket,
         populate_cache: F,
-        handle_event: fn(Event, &mut T, &dyn Matcher<T>, &dyn Logger<T>, bool) -> Result<(), Box<dyn std::error::Error>>,
+        mut handle_event: H,
     ) -> Result<(), Box<dyn std::error::Error>>
     where
-        F: FnOnce(&mut Socket, &mut T, &dyn Logger<T>) -> Result<(), Box<dyn std::error::Error>>,
+        F: FnOnce(&mut Socket, &mut S, &dyn Logger<S::Target>) -> Result<(), Box<dyn std::error::Error>>,
+        H: FnMut(Event, &mut S, &dyn Matcher<S::Target>, &dyn Logger<S::Target>, bool) -> Result<(), Box<dyn std::error::Error>>,
     {
         self.logger.log_connected();
 
-        populate_cache(socket, &mut self.state, self.logger.as_ref())?;
+        populate_cache(&mut socket, &mut self.state, self.logger.as_ref())?;
 
         let reply = socket.send(Request::EventStream)?;
         if !matches!(reply, Ok(Response::Handled)) {
@@ -69,7 +64,7 @@ where
                     }
                 }
                 Err(e) => {
-                    self.log_event_error(e);
+                    self.log_event_error(Box::new(e));
                     break;
                 }
             }

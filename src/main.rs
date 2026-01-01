@@ -1,17 +1,17 @@
 use clap::Parser;
-use niri_ipc::{Event, Request, Response};
 use niri_ipc::socket::Socket;
+use niri_ipc::{Event, Request, Response};
 use regex::Regex;
 use serde_json;
 
+mod follower;
 mod logger;
 mod matcher;
 mod output;
 mod target;
 mod window;
+use follower::Follower;
 use logger::Logger;
-use matcher::Matcher;
-use window::Window;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -84,52 +84,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             cli.id,
         );
 
-        let mut state = window::WindowState::new();
+        let state = window::WindowState::new();
 
-        <logger::GenericLogger as Logger<Window>>::log_connected(&logger);
+        let follower = Follower::new(state, Box::new(matcher), Box::new(logger), json);
 
-        window::populate_window_cache(&mut socket, &mut state, &logger)?;
-
-        let reply = socket.send(Request::EventStream)?;
-        if !matches!(reply, Ok(Response::Handled)) {
-            if json {
-                eprintln!("{}", serde_json::json!({"event": "error", "message": "Failed to start event stream"}));
-            } else {
-                eprintln!("Failed to start event stream: {:?}", reply);
-            }
-            std::process::exit(1);
-        }
-
-        <logger::GenericLogger as Logger<Window>>::log_streaming(&logger);
-
-        let mut read_event = socket.read_events();
-
-        loop {
-            match read_event() {
-                Ok(event) => {
-                    if let Err(e) = handle_window_event(
-                        event,
-                        &mut state,
-                        &matcher,
-                        &logger,
-                    ) {
-                        if json {
-                            eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
-                        } else {
-                            eprintln!("Error handling event: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    if json {
-                        eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
-                    } else {
-                        eprintln!("Error reading event: {}", e);
-                    }
-                    break;
-                }
-            }
-        }
+        follower.run(
+            socket,
+            window::populate_window_cache,
+            handle_window_event,
+        )?
     } else {
         let matcher = output::OutputMatcher::new(
             cli.output
@@ -149,7 +112,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let reply = socket.send(Request::EventStream)?;
         if !matches!(reply, Ok(Response::Handled)) {
             if json {
-                eprintln!("{}", serde_json::json!({"event": "error", "message": "Failed to start event stream"}));
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"event": "error", "message": "Failed to start event stream"})
+                );
             } else {
                 eprintln!("Failed to start event stream: {:?}", reply);
             }
@@ -163,14 +129,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             match read_event() {
                 Ok(event) => {
-                    if let Err(e) = handle_output_event(
-                        event,
-                        &mut state,
-                        &matcher,
-                        &logger,
-                    ) {
+                    if let Err(e) = handle_output_event(event, &mut state, &matcher, &logger, json)
+                    {
                         if json {
-                            eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
+                            eprintln!(
+                                "{}",
+                                serde_json::json!({"event": "error", "message": e.to_string()})
+                            );
                         } else {
                             eprintln!("Error handling event: {}", e);
                         }
@@ -178,7 +143,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => {
                     if json {
-                        eprintln!("{}", serde_json::json!({"event": "error", "message": e.to_string()}));
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"event": "error", "message": e.to_string()})
+                        );
                     } else {
                         eprintln!("Error reading event: {}", e);
                     }
@@ -194,8 +162,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn handle_window_event(
     event: Event,
     state: &mut window::WindowState,
-    matcher: &window::WindowMatcher,
-    logger: &impl logger::Logger<Window>,
+    matcher: &dyn matcher::Matcher<window::Window>,
+    logger: &dyn logger::Logger<window::Window>,
+    _json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match event {
         Event::WindowOpenedOrChanged { window } => {
@@ -204,11 +173,14 @@ fn handle_window_event(
                 app_id: window.app_id.clone(),
                 title: window.title.clone(),
             });
-            state.targets.insert(window.id, window::Window {
-                id: window.id,
-                app_id: window.app_id,
-                title: window.title,
-            });
+            state.targets.insert(
+                window.id,
+                window::Window {
+                    id: window.id,
+                    app_id: window.app_id,
+                    title: window.title,
+                },
+            );
         }
         Event::WindowFocusChanged { id } => {
             let new_window_id = id;
@@ -238,8 +210,9 @@ fn handle_window_event(
 fn handle_output_event(
     _event: Event,
     _state: &mut output::OutputState,
-    _matcher: &output::OutputMatcher,
-    _logger: &impl logger::Logger<output::Output>,
+    _matcher: &dyn matcher::Matcher<output::Output>,
+    _logger: &dyn logger::Logger<output::Output>,
+    _json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
